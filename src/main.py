@@ -2,16 +2,15 @@ from population import Population
 from selection import elitist_selection, roulette_selection, ranking_selection_v1, ranking_selection_v2, tournament_selection, steady_state_selection, crowding_selection
 from crossover import uniform_crossover, arithmetic_crossover, flat_crossover, blx_alpha_crossover, pmx_crossover
 from mutation import random_mutation, uniform_mutation, non_uniform_mutation, swap_mutation
-
 from visualization import plot_evolution
 
-
 import numpy as np
-
 import sys
 import tkinter as tk
 from tkinter import simpledialog
-
+import copy
+import re
+import math
 
 
 # Hyperparameters configuration window
@@ -149,7 +148,13 @@ def get_hyperparameters():
     canvas.bind_all("<MouseWheel>", _on_mousewheel)
     
     root.mainloop()
-    bounds = tuple(float(x.strip()) for x in bounds_var.get().split(','))
+    
+    try:
+        bounds = tuple(float(x.strip()) for x in bounds_var.get().split(','))
+    except ValueError:
+        print("Error: El formato de Límites (min,max) es incorrecto. Usando valores predeterminados (0, 10).")
+        bounds = (0, 10)
+    
     return {
         'POP_SIZE': pop_size_var.get(),
         'DNA_LENGTH': dna_length_var.get(),
@@ -205,12 +210,7 @@ mutation_methods = {
 MUTATION_METHOD = mutation_methods[params['MUTATION_METHOD']]
 
 
-# Get user function from Tkinter window
-
-import re
-
-
-
+# MEJORA 1: Conversión de sintaxis mejorada (sin la conversión problemática de exponentes)
 def convert_to_python_syntax(expr):
     expr = expr.strip()
     # Remove assignment (e.g., z = ... or f(x, y) = ...)
@@ -224,16 +224,14 @@ def convert_to_python_syntax(expr):
     expr = re.sub(r'log\s*\(([^)]+)\)', r'np.log(\1)', expr)
     expr = re.sub(r'exp\s*\(([^)]+)\)', r'np.exp(\1)', expr)
     expr = re.sub(r'sqrt\s*\(([^)]+)\)', r'np.sqrt(\1)', expr)
-    # Replace variables with exponent notation (e.g., y2 -> x[1]**2)
-    var_map = ['x', 'y', 'z', 'w', 'u', 'v', 't', 's', 'r', 'q', 'p']
-    for idx, var in enumerate(var_map):
-        expr = re.sub(rf'\b{var}(\d+)\b', lambda m: f'x[{idx}]**{m.group(1)}', expr)
     # Replace variables x, y, z, w, ... with x[0], x[1], x[2], x[3], ...
+    var_map = ['x', 'y', 'z', 'w', 'u', 'v', 't', 's', 'r', 'q', 'p']
     for idx, var in enumerate(var_map):
         expr = re.sub(rf'\b{var}\b', f'x[{idx}]', expr)
     return expr
 
 
+# MEJORA 2: Visualización mejorada con soporte para encoding real
 def show_all_generations_window(generations_data, encoding):
     import tkinter as tk
     from tkinter import ttk
@@ -328,7 +326,7 @@ def show_all_generations_window(generations_data, encoding):
             
             # Configure columns with better proportions
             tree.heading("#", text="No.", anchor=tk.CENTER)
-            tree.heading("ADN", text="ADN (Binario)", anchor=tk.CENTER)
+            tree.heading("ADN", text="ADN", anchor=tk.CENTER)
             tree.heading("Fitness", text="Fitness", anchor=tk.CENTER)
             
             # Adjust column widths dynamically
@@ -338,8 +336,12 @@ def show_all_generations_window(generations_data, encoding):
             
             # Add data to tree with improved formatting
             for i, ind in enumerate(population.individuals):
-                binary_dna = [1 if bit >= 0.5 else 0 for bit in ind.dna]
-                adn_str = ''.join(str(b) for b in binary_dna)
+                # MEJORA: Mostrar ADN según encoding
+                if encoding == 'real':
+                    adn_str = ', '.join([f'{val:.4f}' for val in ind.dna])
+                else:
+                    binary_dna = [1 if bit >= 0.5 else 0 for bit in ind.dna]
+                    adn_str = ''.join(str(b) for b in binary_dna)
                 
                 # Truncate DNA string if too long for better visibility
                 if len(adn_str) > 24:
@@ -404,7 +406,7 @@ def show_all_generations_window(generations_data, encoding):
     status_frame.pack(fill=tk.X)
     
     status_label = ttk.Label(status_frame, 
-                           text=f"📊 Total: {total_generations} generaciones | 👥 Población: {len(generations_data[0].individuals)} individuos | 🔧 Codificación: {encoding}",
+                           text=f"📊 Total: {total_generations} generaciones | 👥 Población: {len(generations_data[0].individuals) if generations_data else 0} individuos | 🔧 Codificación: {encoding}",
                            font=('Arial', 9))
     status_label.pack(anchor=tk.W)
     
@@ -414,6 +416,7 @@ def show_all_generations_window(generations_data, encoding):
     root.mainloop()
 
 
+# MEJORA 3: Función de fitness con soporte para minimización/maximización
 def get_user_function_tk():
     root = tk.Tk()
     root.withdraw()
@@ -436,29 +439,51 @@ def get_user_function_tk():
     
     python_expr = convert_to_python_syntax(func_str)
     
+    # NUEVA FUNCIONALIDAD: Preguntar por tipo de optimización
+    tipo_optimizacion = input("¿Desea encontrar el mínimo o el máximo de la función? (min/max): ").strip().lower()
+    if tipo_optimizacion not in ["min", "max"]:
+        print("Opción no válida. Se usará 'max' por defecto.")
+        tipo_optimizacion = "max"
+    
     def user_fitness(x):
         try:
-            return eval(python_expr, {"np": np, "x": x})
+            val = eval(python_expr, {"np": np, "x": x, "math": math})
+            # Invertir el signo si buscamos el mínimo
+            if tipo_optimizacion == "min":
+                return -val
+            else:
+                return val
         except Exception as e:
             print(f"Error evaluando la función: {e}")
             sys.exit(1)
     
-    return user_fitness
+    return user_fitness, tipo_optimizacion
 
-fitness_function = get_user_function_tk()
+fitness_function, tipo_optimizacion = get_user_function_tk()
 
 best_fitness = []
 avg_fitness = []
+best_generation = 0  # Rastrear en qué generación se encontró el mejor
+best_value_so_far = float('-inf')  # Mejor valor encontrado hasta ahora
+best_individual_ever = None  # Guardar el mejor individuo encontrado
 
 pop = Population(POP_SIZE, DNA_LENGTH, ENCODING, BOUNDS)
 
 generations_data = []
 for gen in range(GENERATIONS):
     pop.evaluate(fitness_function)
-    best_fitness.append(pop.get_best().fitness)
+    current_best = pop.get_best()
+    current_best_fitness = current_best.fitness
+    best_fitness.append(current_best_fitness)
     avg_fitness.append(pop.get_average_fitness())
+    
+    # Actualizar si encontramos un mejor valor
+    if current_best_fitness > best_value_so_far:
+        best_value_so_far = current_best_fitness
+        best_generation = gen
+        best_individual_ever = copy.deepcopy(current_best)
+    
     # Store a copy of the population for this generation
-    import copy
     generations_data.append(copy.deepcopy(pop))
 
     # Selection (robust)
@@ -482,7 +507,6 @@ for gen in range(GENERATIONS):
         children.append(type(p2)(c2_dna, ENCODING))
     children = children[:POP_SIZE]
 
-
     # Mutation
     for child in children:
         if MUTATION_METHOD == non_uniform_mutation:
@@ -496,6 +520,34 @@ for gen in range(GENERATIONS):
 
 # Ensure all individuals have fitness before showing the final table
 pop.evaluate(fitness_function)
+
+# Verificar si la última generación tiene un mejor individuo
+final_best = pop.get_best()
+if final_best.fitness > best_value_so_far:
+    best_value_so_far = final_best.fitness
+    best_generation = GENERATIONS
+    best_individual_ever = copy.deepcopy(final_best)
+
 generations_data.append(copy.deepcopy(pop))
+
+# MEJORA 4: Mostrar resultado final según tipo de optimización
+final_avg_fitness = pop.get_average_fitness()
+
+if tipo_optimizacion == "min":
+    resultado = -best_individual_ever.fitness
+    promedio_fitness_real = -final_avg_fitness
+    print(f"\n🎯 Valor mínimo encontrado: {resultado:.6f}")
+    print(f"📍 Ubicación: {best_individual_ever.dna}")
+    print(f"📊 Promedio del ADN: {np.mean(best_individual_ever.dna):.6f}")
+    print(f"📈 Promedio del fitness (población final): {promedio_fitness_real:.6f}")
+    print(f"⏱️  Encontrado en la generación: {best_generation}")
+else:
+    resultado = best_individual_ever.fitness
+    print(f"\n🎯 Valor máximo encontrado: {resultado:.6f}")
+    print(f"📍 Ubicación: {best_individual_ever.dna}")
+    print(f"📊 Promedio del ADN: {np.mean(best_individual_ever.dna):.6f}")
+    print(f"📈 Promedio del fitness (población final): {final_avg_fitness:.6f}")
+    print(f"⏱️  Encontrado en la generación: {best_generation}")
+
 show_all_generations_window(generations_data, ENCODING)
 plot_evolution(best_fitness, avg_fitness)
