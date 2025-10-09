@@ -3,6 +3,8 @@ from selection import elitist_selection, roulette_selection, ranking_selection_v
 from crossover import uniform_crossover, arithmetic_crossover, flat_crossover, blx_alpha_crossover, pmx_crossover
 from mutation import random_mutation, uniform_mutation, non_uniform_mutation, swap_mutation
 from visualization import plot_evolution
+import csv
+from datetime import datetime
 
 import numpy as np
 import sys
@@ -415,6 +417,117 @@ def show_all_generations_window(generations_data, encoding):
     
     root.mainloop()
 
+def exportar_resultados_csv(best_individual, best_generation, final_avg_fitness, 
+                            tipo_optimizacion, params, generations_data, encoding):
+    """
+    Exporta los resultados del algoritmo genético a un archivo CSV.
+    
+    Parámetros:
+    - best_individual: El mejor individuo encontrado
+    - best_generation: Generación en la que se encontró el mejor
+    - final_avg_fitness: Fitness promedio de la población final
+    - tipo_optimizacion: 'min' o 'max'
+    - params: Diccionario con los parámetros del algoritmo
+    - generations_data: Lista con las poblaciones de cada generación
+    - encoding: Tipo de codificación ('binary' o 'real')
+    """
+    
+    # Crear nombre de archivo con timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"resultados_GA_{timestamp}.csv"
+    
+    # Calcular el valor real según tipo de optimización
+    if tipo_optimizacion == "min":
+        resultado = -best_individual.fitness
+        promedio_fitness_real = -final_avg_fitness
+    else:
+        resultado = best_individual.fitness
+        promedio_fitness_real = final_avg_fitness
+    
+    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        
+        # Encabezado
+        writer.writerow(['=== RESULTADOS DEL ALGORITMO GENÉTICO ==='])
+        writer.writerow([])
+        
+        # Parámetros de configuración
+        writer.writerow(['PARÁMETROS DE CONFIGURACIÓN'])
+        writer.writerow(['Parámetro', 'Valor'])
+        writer.writerow(['Tamaño de población', params['POP_SIZE']])
+        writer.writerow(['Número de alelos', params['DNA_LENGTH']])
+        writer.writerow(['Número de generaciones', params['GENERATIONS']])
+        writer.writerow(['Codificación', params['ENCODING']])
+        writer.writerow(['Límites', f"{params['BOUNDS'][0]}, {params['BOUNDS'][1]}"])
+        writer.writerow(['Método de selección', params['SELECTION_METHOD']])
+        writer.writerow(['Método de cruce', params['CROSSOVER_METHOD']])
+        writer.writerow(['Probabilidad de cruce (Pc)', params['PC']])
+        writer.writerow(['Método de mutación', params['MUTATION_METHOD']])
+        writer.writerow(['Probabilidad de mutación (Pm)', params['PM']])
+        writer.writerow(['Tipo de optimización', tipo_optimizacion.upper()])
+        writer.writerow([])
+        
+        # Resultados principales
+        writer.writerow(['RESULTADOS PRINCIPALES'])
+        writer.writerow(['Métrica', 'Valor'])
+        writer.writerow([f'Valor {"mínimo" if tipo_optimizacion == "min" else "máximo"} encontrado', f'{resultado:.6f}'])
+        writer.writerow(['Generación del mejor resultado', best_generation])
+        writer.writerow(['Promedio del fitness (población final)', f'{promedio_fitness_real:.6f}'])
+        writer.writerow(['Promedio del ADN del mejor individuo', f'{sum(best_individual.dna)/len(best_individual.dna):.6f}'])
+        writer.writerow([])
+        
+        # ADN del mejor individuo
+        writer.writerow(['ADN DEL MEJOR INDIVIDUO'])
+        if encoding == 'real':
+            writer.writerow(['Posición'] + [f'Alelo {i+1}' for i in range(len(best_individual.dna))])
+            writer.writerow(['Valor'] + [f'{val:.6f}' for val in best_individual.dna])
+        else:
+            binary_dna = [1 if bit >= 0.5 else 0 for bit in best_individual.dna]
+            writer.writerow(['Posición'] + [f'Bit {i+1}' for i in range(len(binary_dna))])
+            writer.writerow(['Valor'] + binary_dna)
+        writer.writerow([])
+        
+        # Evolución por generación
+        writer.writerow(['EVOLUCIÓN POR GENERACIÓN'])
+        writer.writerow(['Generación', 'Mejor Fitness', 'Fitness Promedio'])
+        
+        for gen_idx, pop in enumerate(generations_data[:-1]):  # Excluir la última que es duplicada
+            best_fit = max([ind.fitness for ind in pop.individuals])
+            avg_fit = sum([ind.fitness for ind in pop.individuals]) / len(pop.individuals)
+            
+            # Ajustar según tipo de optimización
+            if tipo_optimizacion == "min":
+                best_fit = -best_fit
+                avg_fit = -avg_fit
+            
+            writer.writerow([gen_idx, f'{best_fit:.6f}', f'{avg_fit:.6f}'])
+        
+        writer.writerow([])
+        writer.writerow(['POBLACIÓN FINAL (Todos los individuos)'])
+        
+        # Encabezados para la población final
+        headers = ['#', 'Fitness']
+        if encoding == 'real':
+            headers += [f'Alelo_{i+1}' for i in range(params['DNA_LENGTH'])]
+        else:
+            headers += [f'Bit_{i+1}' for i in range(params['DNA_LENGTH'])]
+        writer.writerow(headers)
+        
+        # Datos de todos los individuos de la población final
+        final_pop = generations_data[-1]
+        for i, ind in enumerate(final_pop.individuals):
+            fitness_val = -ind.fitness if tipo_optimizacion == "min" else ind.fitness
+            
+            if encoding == 'real':
+                row = [i+1, f'{fitness_val:.6f}'] + [f'{val:.6f}' for val in ind.dna]
+            else:
+                binary_dna = [1 if bit >= 0.5 else 0 for bit in ind.dna]
+                row = [i+1, f'{fitness_val:.6f}'] + binary_dna
+            
+            writer.writerow(row)
+    
+    print(f"\n✅ Resultados exportados exitosamente a: {filename}")
+    return filename
 
 # MEJORA 3: Función de fitness con soporte para minimización/maximización
 def get_user_function_tk():
@@ -548,6 +661,16 @@ else:
     print(f"📊 Promedio del ADN: {np.mean(best_individual_ever.dna):.6f}")
     print(f"📈 Promedio del fitness (población final): {final_avg_fitness:.6f}")
     print(f"⏱️  Encontrado en la generación: {best_generation}")
+
+exportar_resultados_csv(
+    best_individual=best_individual_ever,
+    best_generation=best_generation,
+    final_avg_fitness=final_avg_fitness,
+    tipo_optimizacion=tipo_optimizacion,
+    params=params,
+    generations_data=generations_data,
+    encoding=ENCODING
+)
 
 show_all_generations_window(generations_data, ENCODING)
 plot_evolution(best_fitness, avg_fitness)
